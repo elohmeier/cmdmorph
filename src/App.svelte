@@ -13,12 +13,18 @@
     smartFormat,
     stripWrapper,
     toOneLine,
+    type InputKind,
     unindent,
     unquoteJson,
   } from './lib/transforms'
 
   type Transform = (input: string) => string
-  type Action = { label: string; hint: string; transform: Transform }
+  type Action = {
+    label: string
+    hint: string
+    transform: Transform
+    onlyFor?: InputKind
+  }
 
   const SAMPLE = [
     '    curl --request POST \\',
@@ -28,7 +34,12 @@
   ].join('\n')
 
   const structureActions: Action[] = [
-    { label: 'Curl → multiline', hint: 'Put curl arguments on separate lines', transform: formatCurl },
+    {
+      label: 'Curl → multiline',
+      hint: 'Put standalone curl arguments on separate lines',
+      transform: formatCurl,
+      onlyFor: 'curl',
+    },
     { label: 'One line', hint: 'Remove continuations and newlines', transform: toOneLine },
     { label: 'Indent', hint: 'Add two spaces to every line', transform: indent },
     { label: 'Unindent', hint: 'Remove one indentation level', transform: unindent },
@@ -193,14 +204,16 @@
         </div>
         <div class="action-list">
           {#each structureActions as action}
+            {@const unavailable = action.onlyFor !== undefined && action.onlyFor !== detection.kind}
             <button
               class="action-button"
               type="button"
-              title={action.hint}
+              title={unavailable ? 'Available for standalone curl commands' : action.hint}
+              disabled={unavailable}
               onclick={() => applyTransform(action.label, action.transform)}
             >
               <span>{action.label}</span>
-              <span aria-hidden="true">＋</span>
+              <span aria-hidden="true">{unavailable ? '—' : '＋'}</span>
             </button>
           {/each}
         </div>

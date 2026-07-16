@@ -412,6 +412,15 @@ h1 em {
   color: var(--ink);
 }
 
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.action-button:disabled:hover {
+  color: var(--muted);
+}
+
 .action-button span:last-child {
   color: var(--accent-dark);
   font-size: 13px;

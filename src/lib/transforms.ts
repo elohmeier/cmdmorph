@@ -98,14 +98,31 @@ export function unindent(input: string, width = 2): string {
 }
 
 export function toOneLine(input: string): string {
-  return dedent(stripWrapper(input))
-    .replace(/\\[ \t]*\n[ \t]*/g, ' ')
+  const clean = dedent(stripWrapper(input))
+  const lines = clean
+    .replace(/[ \t]*\\[ \t]*\n[ \t]*/g, ' ')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .join(' ')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim()
+
+  if (lines.length <= 1) return lines[0] ?? ''
+
+  const detection = detectInput(clean)
+  if (detection.kind !== 'curl' && detection.kind !== 'shell') {
+    return lines.join(' ')
+  }
+
+  return lines.reduce((result, line) => {
+    if (result === '') return line
+
+    const continuesFromPrevious =
+      /(?:\||\|\||&&|\(|\$\(|\{|then|do|else|in)\s*$/.test(result) ||
+      /^(?:\||\|\||&&)\s*/.test(line)
+    const alreadySeparated = /(?:;|&)\s*$/.test(result)
+    const separator = continuesFromPrevious || alreadySeparated ? ' ' : '; '
+
+    return result + separator + line
+  }, '')
 }
 
 function tokenizeShell(input: string): string[] {
@@ -177,6 +194,11 @@ const CURL_FLAGS_WITHOUT_VALUE = new Set([
 
 export function formatCurl(input: string): string {
   const clean = dedent(stripWrapper(input)).trim()
+
+  if (!/^(?:sudo\s+)?curl(?:\s|\\|$)/.test(clean)) {
+    return clean
+  }
+
   const tokens = tokenizeShell(clean)
   const curlIndex = tokens.findIndex((token) => token === 'curl')
 

@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
   decodeBase64,
@@ -10,6 +11,37 @@ import {
   toOneLine,
   unindent,
 } from './transforms'
+
+const SYNTHETIC_NESTED_SHELL = [
+  'API_RESPONSE="$(',
+  '  curl --silent \\',
+  '    --data "$(',
+  '      printf \'{"user":"%s"}\' "$EXAMPLE_USER"',
+  '    )" \\',
+  '    "${EXAMPLE_API_URL%/}/api/session"',
+  ')"',
+  '',
+  'SESSION_TOKEN="$(',
+  '  printf \'%s\' "$API_RESPONSE" |',
+  '    head -n1',
+  ')"',
+  '',
+  'test -n "$SESSION_TOKEN" || {',
+  '  echo "Response contained no session token" >&2',
+  '  exit 1',
+  '}',
+  '',
+  'curl --silent \\',
+  '  -H "X-Session-Token: $SESSION_TOKEN" \\',
+  '  "${EXAMPLE_API_URL%/}/api/v1/report"',
+  '',
+  'unset SESSION_TOKEN API_RESPONSE',
+].join('\n')
+
+function expectValidShell(script: string) {
+  const result = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stderr)
+}
 
 describe('input cleanup', () => {
   it('removes a Markdown fence and shell prompts', () => {
@@ -45,6 +77,19 @@ describe('detection and formatting', () => {
     expect(toOneLine('curl \\\n  --silent \\\n  https://example.com')).toBe(
       'curl --silent https://example.com',
     )
+  })
+
+  it('preserves shell separators when joining a nested script', () => {
+    const result = toOneLine(SYNTHETIC_NESTED_SHELL)
+
+    expect(result).not.toContain('\n')
+    expect(result).toContain(';')
+    expectValidShell(result)
+  })
+
+  it('does not treat a curl nested in a shell script as standalone curl input', () => {
+    expect(formatCurl(SYNTHETIC_NESTED_SHELL)).toBe(SYNTHETIC_NESTED_SHELL)
+    expectValidShell(formatCurl(SYNTHETIC_NESTED_SHELL))
   })
 })
 
