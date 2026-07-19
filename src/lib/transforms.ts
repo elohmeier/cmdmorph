@@ -6,7 +6,10 @@ export type Detection = {
 }
 
 const SHELL_COMMAND =
-  /^(?:sudo\s+)?(?:bash|cat|cd|chmod|curl|docker|echo|git|gh|grep|helm|jq|kubectl|make|npm|npx|pnpm|python|rg|ssh|tar|uv|wget|yarn)\b/
+  /^(?:sudo\s+)?(?:bash|cat|cd|chmod|curl|docker|echo|export|fish|git|gh|grep|helm|http|https|jq|kubectl|local|make|npm|npx|pnpm|printf|python|rg|set|ssh|tar|unset|uv|wget|yarn)\b/
+
+const SHELL_ASSIGNMENT = /^(?:(?:export|local)\s+)?[A-Za-z_][A-Za-z0-9_]*=/
+const SHELL_VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 export function stripWrapper(input: string): string {
   const lines = input.replace(/\r\n?/g, '\n').split('\n')
@@ -67,6 +70,7 @@ export function detectInput(input: string): Detection {
 
   if (
     SHELL_COMMAND.test(clean) ||
+    SHELL_ASSIGNMENT.test(clean) ||
     /\\\s*\n/.test(clean) ||
     /(?:^|\s)(?:&&|\|\||\|)(?:\s|$)/.test(clean)
   ) {
@@ -248,6 +252,146 @@ export function smartFormat(input: string): string {
   if (detection.kind === 'curl') return formatCurl(clean)
   if (detection.kind === 'json') return prettyJson(clean)
   return clean
+}
+
+type ShellLine = {
+  code: string
+  suffix: string
+}
+
+function splitShellComment(line: string): ShellLine {
+  let quote: "'" | '"' | null = null
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    const next = line[index + 1]
+
+    if (quote) {
+      if (char === '\\' && quote === '"' && next) {
+        index += 1
+      } else if (char === quote) {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char
+    } else if (char === '\\' && next) {
+      index += 1
+    } else if (
+      char === '#' &&
+      !(index === 0 && next === '!') &&
+      (index === 0 || /\s/.test(line[index - 1]))
+    ) {
+      const code = line.slice(0, index).trimEnd()
+      return { code, suffix: line.slice(code.length) }
+    }
+  }
+
+  const code = line.trimEnd()
+  return { code, suffix: line.slice(code.length) }
+}
+
+function bashLineToFish(line: string): string {
+  const { code, suffix } = splitShellComment(line)
+
+  if (/^\s*#!.*\b(?:ba)?sh\b/.test(code)) {
+    return code.replace(/\b(?:ba)?sh\b/, 'fish') + suffix
+  }
+
+  const unset = code.match(/^(\s*)unset\s+(.+)$/)
+  if (unset) {
+    const names = tokenizeShell(unset[2])
+    if (names.length > 0 && names.every((name) => SHELL_VARIABLE_NAME.test(name))) {
+      return `${unset[1]}set -e ${names.join(' ')}` + suffix
+    }
+  }
+
+  const assignment = code.match(
+    /^(\s*)(?:(export|local)\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/,
+  )
+  if (!assignment) return line
+
+  const [, indentation, declaration, name, rawValue] = assignment
+  const option = declaration === 'export' ? ' -gx' : declaration === 'local' ? ' -l' : ''
+  const value = rawValue === '' ? "''" : rawValue
+  return `${indentation}set${option} ${name} ${value}` + suffix
+}
+
+function fishLineToBash(line: string): string {
+  const { code, suffix } = splitShellComment(line)
+
+  if (/^\s*#!.*\bfish\b/.test(code)) {
+    return code.replace(/\bfish\b/, 'bash') + suffix
+  }
+
+  const indentation = code.match(/^\s*/)?.[0] ?? ''
+  const tokens = tokenizeShell(code.trim())
+  if (tokens[0] !== 'set') return line
+
+  const optionCharacters = new Set<string>()
+  let index = 1
+
+  for (; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token === '--') {
+      index += 1
+      break
+    }
+    if (!/^-[A-Za-z]+$/.test(token)) break
+    for (const character of token.slice(1)) optionCharacters.add(character)
+  }
+
+  const unsupportedOptions = [...optionCharacters].some(
+    (option) => !['e', 'f', 'g', 'l', 'x'].includes(option),
+  )
+  if (unsupportedOptions) return line
+
+  const name = tokens[index]
+  if (!name || !SHELL_VARIABLE_NAME.test(name)) return line
+
+  if (optionCharacters.has('e')) {
+    const names = tokens.slice(index)
+    if (names.every((candidate) => SHELL_VARIABLE_NAME.test(candidate))) {
+      return `${indentation}unset ${names.join(' ')}` + suffix
+    }
+    return line
+  }
+
+  const values = tokens.slice(index + 1)
+  const value = values.length === 0 ? "''" : values.length === 1 ? values[0] : `(${values.join(' ')})`
+  const isLocal = optionCharacters.has('l') || optionCharacters.has('f')
+  const isExported = optionCharacters.has('x')
+  const declaration = isLocal ? (isExported ? 'local -x ' : 'local ') : isExported ? 'export ' : ''
+
+  return `${indentation}${declaration}${name}=${value}` + suffix
+}
+
+/** Convert common Bash variable declarations to Fish while leaving shared command syntax intact. */
+export function bashToFish(input: string): string {
+  let continuesPreviousLine = false
+  return dedent(stripWrapper(input))
+    .split('\n')
+    .map((line) => {
+      const converted = continuesPreviousLine ? line : bashLineToFish(line)
+      continuesPreviousLine = /\\$/.test(splitShellComment(line).code)
+      return converted
+    })
+    .join('\n')
+}
+
+/** Convert common Fish `set` declarations to Bash while leaving shared command syntax intact. */
+export function fishToBash(input: string): string {
+  let continuesPreviousLine = false
+  return dedent(stripWrapper(input))
+    .split('\n')
+    .map((line) => {
+      const converted = continuesPreviousLine ? line : fishLineToBash(line)
+      continuesPreviousLine = /\\$/.test(splitShellComment(line).code)
+      return converted
+    })
+    .join('\n')
 }
 
 export function encodeUrl(input: string): string {

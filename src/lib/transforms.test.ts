@@ -1,16 +1,44 @@
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
+  bashToFish,
   decodeBase64,
   dedent,
   detectInput,
   encodeBase64,
+  fishToBash,
   formatCurl,
   smartFormat,
   stripWrapper,
   toOneLine,
   unindent,
 } from './transforms'
+
+const EXAMPLE_HTTP_PIPELINE_BASH = [
+  "API='https://api.example.invalid'",
+  "TENANT='EXAMPLE-TENANT'",
+  "VERSION='1.2.3'",
+  "RESOURCE='resource-00000000-0000-0000-0000-000000000000'",
+  '',
+  'https --check-status GET "$API/v1/resources/$RESOURCE" \\',
+  '  "X-Example-Tenant:$TENANT" \\',
+  '  "X-Example-Version:$VERSION" \\',
+  '  include_name==true \\',
+  "| jq '{ name, id }'",
+].join('\n')
+
+const EXAMPLE_HTTP_PIPELINE_FISH = [
+  "set API 'https://api.example.invalid'",
+  "set TENANT 'EXAMPLE-TENANT'",
+  "set VERSION '1.2.3'",
+  "set RESOURCE 'resource-00000000-0000-0000-0000-000000000000'",
+  '',
+  'https --check-status GET "$API/v1/resources/$RESOURCE" \\',
+  '  "X-Example-Tenant:$TENANT" \\',
+  '  "X-Example-Version:$VERSION" \\',
+  '  include_name==true \\',
+  "| jq '{ name, id }'",
+].join('\n')
 
 const SYNTHETIC_NESTED_SHELL = [
   'API_RESPONSE="$(',
@@ -90,6 +118,48 @@ describe('detection and formatting', () => {
   it('does not treat a curl nested in a shell script as standalone curl input', () => {
     expect(formatCurl(SYNTHETIC_NESTED_SHELL)).toBe(SYNTHETIC_NESTED_SHELL)
     expectValidShell(formatCurl(SYNTHETIC_NESTED_SHELL))
+  })
+
+  it('detects standalone Bash and Fish variable declarations as shell', () => {
+    expect(detectInput("MODE='demo'").kind).toBe('shell')
+    expect(detectInput("set MODE 'demo'").kind).toBe('shell')
+  })
+})
+
+describe('shell dialect conversion', () => {
+  it('converts a neutral multiline HTTP pipeline from Bash to Fish', () => {
+    const result = bashToFish(EXAMPLE_HTTP_PIPELINE_BASH)
+
+    expect(result).toBe(EXAMPLE_HTTP_PIPELINE_FISH)
+    const fish = spawnSync('fish', ['-n'], { input: result, encoding: 'utf8' })
+    if (!fish.error && fish.status !== 0) throw new Error(fish.stderr)
+  })
+
+  it('converts the neutral multiline HTTP pipeline back to Bash', () => {
+    const result = fishToBash(EXAMPLE_HTTP_PIPELINE_FISH)
+
+    expect(result).toBe(EXAMPLE_HTTP_PIPELINE_BASH)
+    expectValidShell(result)
+  })
+
+  it('preserves declaration scope, export state, comments, and unsets', () => {
+    const bash = [
+      '#!/usr/bin/env bash',
+      "export MODE='demo' # shared setting",
+      'local ITEM="$VALUE"',
+      'EMPTY=',
+      'unset OLD_ITEM UNUSED_ITEM',
+    ].join('\n')
+    const fish = [
+      '#!/usr/bin/env fish',
+      "set -gx MODE 'demo' # shared setting",
+      'set -l ITEM "$VALUE"',
+      "set EMPTY ''",
+      'set -e OLD_ITEM UNUSED_ITEM',
+    ].join('\n')
+
+    expect(bashToFish(bash)).toBe(fish)
+    expect(fishToBash(fish)).toBe(bash.replace('EMPTY=', "EMPTY=''"))
   })
 })
 

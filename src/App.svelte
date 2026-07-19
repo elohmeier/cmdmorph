@@ -1,11 +1,13 @@
 <script lang="ts">
   import CodeEditor from './lib/CodeEditor.svelte'
   import {
+    bashToFish,
     decodeBase64,
     decodeUrl,
     detectInput,
     encodeBase64,
     encodeUrl,
+    fishToBash,
     formatCurl,
     indent,
     quoteJson,
@@ -44,6 +46,21 @@
     { label: 'Indent', hint: 'Add two spaces to every line', transform: indent },
     { label: 'Unindent', hint: 'Remove one indentation level', transform: unindent },
     { label: 'Strip wrapper', hint: 'Remove Markdown fences and shell prompts', transform: stripWrapper },
+  ]
+
+  const shellActions: Action[] = [
+    {
+      label: 'Bash → Fish',
+      hint: 'Convert common Bash variable declarations to Fish syntax',
+      transform: bashToFish,
+      onlyFor: 'shell',
+    },
+    {
+      label: 'Fish → Bash',
+      hint: 'Convert common Fish set declarations to Bash syntax',
+      transform: fishToBash,
+      onlyFor: 'shell',
+    },
   ]
 
   const encodingActions: Action[] = [
@@ -209,6 +226,28 @@
               class="action-button"
               type="button"
               title={unavailable ? 'Available for standalone curl commands' : action.hint}
+              disabled={unavailable}
+              onclick={() => applyTransform(action.label, action.transform)}
+            >
+              <span>{action.label}</span>
+              <span aria-hidden="true">{unavailable ? '—' : '＋'}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="tool-group">
+        <div class="group-heading">
+          <h2>Shell dialect</h2>
+          <span>02</span>
+        </div>
+        <div class="action-list">
+          {#each shellActions as action}
+            {@const unavailable = action.onlyFor !== undefined && action.onlyFor !== detection.kind}
+            <button
+              class="action-button"
+              type="button"
+              title={unavailable ? 'Available for shell commands' : action.hint}
               disabled={unavailable}
               onclick={() => applyTransform(action.label, action.transform)}
             >

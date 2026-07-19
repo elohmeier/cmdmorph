@@ -10,6 +10,7 @@ transformation. Nothing is sent to a server or persisted in local storage.
 - Detects curl commands, shell commands, JSON, and plain text
 - Formats standalone curl commands across lines
 - Collapses multiline shell snippets while preserving required command separators
+- Converts common variable declarations between Bash and Fish syntax
 - Indents, unindents, and removes Markdown fences and shell prompts
 - Encodes and decodes URL components and Base64
 - Quotes and unquotes JSON strings, plus safe whole-value shell quoting
